@@ -19,6 +19,7 @@
 #include <string.h>
 #include <stdio.h>
 
+static FILE* out;
 static jlong start_time;
 
 static void trace(jvmtiEnv *jvmti_env, const char* fmt, ...) {
@@ -32,8 +33,8 @@ static void trace(jvmtiEnv *jvmti_env, const char* fmt, ...) {
     va_end(args);
 
     jlong time = current_time - start_time;
-    fprintf(stderr, "[%d.%05d] %s\n", (int)(time / 1000000000),
-                                      (int)(time % 1000000000 / 10000), buf);
+    fprintf(out, "[%d.%05d] %s\n", (int)(time / 1000000000),
+                                   (int)(time % 1000000000 / 10000), buf);
 }
 
 static char* fix_class_name(char* class_name) {
@@ -96,9 +97,15 @@ void JNICALL GarbageCollectionFinish(jvmtiEnv *jvmti_env) {
 }
 
 JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved) {
+    if (options == NULL || !options[0]) {
+        out = stderr;
+    } else if ((out = fopen(options, "w")) == NULL) {
+        fprintf(stderr, "Cannot open output file: %s\n", options);
+        return 1;
+    }
+
     jvmtiEnv* jvmti;
     (*vm)->GetEnv(vm, (void**)&jvmti, JVMTI_VERSION_1_0);
-
     (*jvmti)->GetTime(jvmti, &start_time);
     trace(jvmti, "VMTrace started");
 
