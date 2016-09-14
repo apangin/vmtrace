@@ -20,9 +20,12 @@
 #include <stdio.h>
 
 static FILE* out;
+static jrawMonitorID vmtrace_lock;
 static jlong start_time;
 
 static void trace(jvmtiEnv *jvmti_env, const char* fmt, ...) {
+    (*jvmti_env)->RawMonitorEnter(jvmti_env, vmtrace_lock);
+
     jlong current_time;
     (*jvmti_env)->GetTime(jvmti_env, &current_time);
 
@@ -35,6 +38,8 @@ static void trace(jvmtiEnv *jvmti_env, const char* fmt, ...) {
     jlong time = current_time - start_time;
     fprintf(out, "[%d.%05d] %s\n", (int)(time / 1000000000),
                                    (int)(time % 1000000000 / 10000), buf);
+
+    (*jvmti_env)->RawMonitorExit(jvmti_env, vmtrace_lock);
 }
 
 static char* fix_class_name(char* class_name) {
@@ -51,6 +56,9 @@ void JNICALL VMInit(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread) {
     trace(jvmti_env, "VM initialized");
 }
 
+void JNICALL VMDeath(jvmtiEnv *jvmti_env, JNIEnv* jni_env) {
+    trace(jvmti_env, "VM destroyed");
+}
 
 void JNICALL ClassFileLoadHook(jvmtiEnv *jvmti_env, JNIEnv* jni_env,
                                jclass class_being_redefined, jobject loader,
@@ -106,6 +114,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved) {
 
     jvmtiEnv* jvmti;
     (*vm)->GetEnv(vm, (void**)&jvmti, JVMTI_VERSION_1_0);
+    (*jvmti)->CreateRawMonitor(jvmti, "vmtrace_lock", &vmtrace_lock);
     (*jvmti)->GetTime(jvmti, &start_time);
     trace(jvmti, "VMTrace started");
 
@@ -118,6 +127,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved) {
     jvmtiEventCallbacks callbacks = {0};
     callbacks.VMStart = VMStart;
     callbacks.VMInit = VMInit;
+    callbacks.VMDeath = VMDeath;
     callbacks.ClassFileLoadHook = ClassFileLoadHook;
     callbacks.ClassPrepare = ClassPrepare;
     callbacks.DynamicCodeGenerated = DynamicCodeGenerated;
@@ -128,6 +138,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved) {
 
     (*jvmti)->SetEventNotificationMode(jvmti, JVMTI_ENABLE, JVMTI_EVENT_VM_START, NULL);
     (*jvmti)->SetEventNotificationMode(jvmti, JVMTI_ENABLE, JVMTI_EVENT_VM_INIT, NULL);
+    (*jvmti)->SetEventNotificationMode(jvmti, JVMTI_ENABLE, JVMTI_EVENT_VM_DEATH, NULL);
     (*jvmti)->SetEventNotificationMode(jvmti, JVMTI_ENABLE, JVMTI_EVENT_CLASS_FILE_LOAD_HOOK, NULL);
     (*jvmti)->SetEventNotificationMode(jvmti, JVMTI_ENABLE, JVMTI_EVENT_CLASS_PREPARE, NULL);
     (*jvmti)->SetEventNotificationMode(jvmti, JVMTI_ENABLE, JVMTI_EVENT_DYNAMIC_CODE_GENERATED, NULL);
@@ -136,4 +147,10 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved) {
     (*jvmti)->SetEventNotificationMode(jvmti, JVMTI_ENABLE, JVMTI_EVENT_GARBAGE_COLLECTION_FINISH, NULL);
 
     return 0;
+}
+
+JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
+    if (out != NULL && out != stderr) {
+        fclose(out);
+    }
 }
